@@ -1,231 +1,214 @@
 from midiutil import MIDIFile
 import numpy as np
 from PIL import Image
-import os
-import shutil
-import traceback
 import colorsys
-import io
 import random
-import signal
 import cv2
 import sys
-import logging
+from scipy.stats import entropy
+import scipy.ndimage as ndimage
 
-logging.basicConfig(level=logging.DEBUG)
-print("Starting music generation...")
+print("Initiating cosmic soundscape generation with balanced volumes...")
 
 def get_image_data(image_path):
-    """
-    Load and process image data, converting to RGB and HSV arrays.
-    
-    Args:
-        image_path (str): Path to the input image file.
-    
-    Returns:
-        tuple: RGB array, HSV array, and warmth-coolness measure.
-    """
     try:
         im = Image.open(image_path)
         rgb_array = np.array(im.convert('RGB').getdata(), dtype=np.float32) / 255.0
         hsv_array = np.array([colorsys.rgb_to_hsv(*pixel) for pixel in rgb_array])
-        warmth_coolness = np.sum(rgb_array[:, :2], axis=1) - rgb_array[:, 2]
-        return rgb_array, hsv_array, warmth_coolness
+        luminance = np.mean(rgb_array, axis=1)
+        return rgb_array, hsv_array, luminance, im
     except Exception as e:
         print(f"Error in get_image_data: {e}")
         sys.exit(1)
 
-def get_tempo(rgb_array):
-    """
-    Calculate tempo based on image entropy.
-    
-    Args:
-        rgb_array (np.array): RGB array of the image.
-    
-    Returns:
-        int: Tempo value between 100 and 180 BPM.
-    """
-    entropy = -np.sum(rgb_array * np.log2(rgb_array + 1e-10))
-    max_entropy = -np.log2(1/len(rgb_array)) * len(rgb_array)
-    normalized_entropy = entropy / max_entropy
-    return int(100 + normalized_entropy * 80)
+def get_cosmic_tempo(image):
+    gray = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2GRAY)
+    entropy_value = entropy(gray.flatten())
+    return int(100 + (entropy_value / 8) * 40)  # Map entropy to 100-140 bpm range
 
-def get_time_signature(image_path):
-    """
-    Determine time signature based on image complexity.
-    
-    Args:
-        image_path (str): Path to the input image file.
-    
-    Returns:
-        int: Time signature numerator (2 or 4).
-    """
-    img = cv2.imread(image_path, 0)
-    edges = cv2.Canny(img, 100, 200)
-    lines = cv2.HoughLinesP(edges, 1, np.pi/180, 50, minLineLength=50, maxLineGap=10)
-    return 2 if lines is not None and len(lines) > 10 else 4
+def get_stellar_time_signature(image):
+    gray = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2GRAY)
+    edges = cv2.Canny(gray, 100, 200)
+    lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=100, minLineLength=100, maxLineGap=10)
+    if lines is not None and len(lines) > 10:
+        return 2  # More line-like shapes, 2/4
+    contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+    triangles = sum(1 for cnt in contours if len(cnt) == 3)
+    return 3 if triangles > 5 else 4  # 3/4 if more triangles, else 4/4
 
-def get_key_and_scale(hsv_array, warmth_coolness):
-    """
-    Determine musical key and scale based on image colors.
-    
-    Args:
-        hsv_array (np.array): HSV array of the image.
-        warmth_coolness (np.array): Warmth-coolness measure of the image.
-    
-    Returns:
-        tuple: Musical scale and key (major/minor).
-    """
-    hue_bins = np.linspace(0, 1, 8)[:-1]
-    most_common_hue = np.digitize(np.mean(hsv_array[:, 0]), hue_bins) - 1
-    scale = ["C", "D", "E", "F", "G", "A", "B"][most_common_hue]
-    key = "major" if np.mean(warmth_coolness) > 0 else "minor"
+def get_galactic_key_and_scale(hsv_array):
+    hue_mean = np.mean(hsv_array[:, 0])
+    value_mean = np.mean(hsv_array[:, 2])
+    scales = ["C", "D", "E", "F", "G", "A", "B"]
+    scale = scales[int(hue_mean * 7)]
+    key = "major" if value_mean > 0.5 else "minor"
     return scale, key
 
-def generate_melody(edges, scale, key):
-    """
-    Generate melody based on image edges and musical scale.
-    
-    Args:
-        edges (np.array): Edge detection result of the image.
-        scale (str): Musical scale.
-        key (str): Musical key (major/minor).
-    
-    Returns:
-        list: List of (note, duration) tuples representing the melody.
-    """
-    base_note = 60
+def generate_cosmic_melody(edges, scale, key, length=64):
+    base_note = {"C": 60, "D": 62, "E": 64, "F": 65, "G": 67, "A": 69, "B": 71}[scale]
     scale_intervals = [0, 2, 4, 5, 7, 9, 11] if key == "major" else [0, 2, 3, 5, 7, 8, 10]
-    melody = []
-    for edge in edges:
-        note = base_note + random.choice(scale_intervals)
-        duration = 0.25 if edge > 128 else 0.5
-        melody.append((note, duration))
-    return melody
+    edge_density = np.mean(edges) / 255.0
+    complexity = int(edge_density * 4) + 1  # 1 to 5
+    durations = [0.25, 0.5, 1, 2][0:complexity]
+    return [(base_note + random.choice(scale_intervals), random.choice(durations)) for _ in range(length)]
 
-def generate_chord_progression(hsv_array):
-    """
-    Generate chord progression based on color variance.
-    
-    Args:
-        hsv_array (np.array): HSV array of the image.
-    
-    Returns:
-        list: List of chord progressions.
-    """
-    color_variance = np.std(hsv_array[:, 0])
-    return [0, 3, 4, 0] if color_variance < 0.1 else [0, 5, 3, 4]
+def create_nebula_chords(hsv_array, scale, key):
+    hue_std = np.std(hsv_array[:, 0])
+    if hue_std < 0.1:  # Analogous colors
+        chords = [[0, 4, 7], [5, 9, 12], [7, 11, 14]] if key == "major" else [[0, 3, 7], [5, 8, 12], [7, 10, 14]]
+    else:  # More complex for complementary colors
+        chords = [[0, 4, 7], [5, 9, 12], [7, 11, 14], [3, 7, 10], [8, 12, 15]] if key == "major" else [[0, 3, 7], [5, 8, 12], [7, 10, 14], [3, 7, 10], [8, 11, 15]]
+    base_note = {"C": 60, "D": 62, "E": 64, "F": 65, "G": 67, "A": 69, "B": 71}[scale]
+    return [[note + base_note for note in chord] for chord in chords]
 
-def select_instrument(rgb_array):
-    """
-    Select MIDI instrument based on image texture.
-    
-    Args:
-        rgb_array (np.array): RGB array of the image.
-    
-    Returns:
-        int: MIDI instrument number.
-    """
+def select_cosmic_instrument(rgb_array):
     texture = np.std(rgb_array)
-    if texture < 0.1:
-        return 1
-    elif texture < 0.2:
-        return 4
-    else:
-        return 26
+    return 4 if texture > 0.2 else 0  # Electric Piano if textured, else Acoustic Grand Piano
 
-def create_midi(image_path, output_file):
-    """
-    Create MIDI file from image.
-    
-    Args:
-        image_path (str): Path to the input image file.
-        output_file (str): Path to save the output MIDI file.
-    """
+def get_cosmic_volume(luminance):
+    return int(48 + luminance.mean() * 47)  # Map to MIDI volume range (48-95)
+
+def generate_texture_based_piano(rgb_array, scale, key, length=64):
+    base_note = {"C": 60, "D": 62, "E": 64, "F": 65, "G": 67, "A": 69, "B": 71}[scale]
+    scale_intervals = [0, 2, 4, 5, 7, 9, 11] if key == "major" else [0, 2, 3, 5, 7, 8, 10]
+    texture = np.std(rgb_array)
+    complexity = int(texture * 5) + 1  # 1 to 6
+    return [(base_note + random.choice(scale_intervals), random.uniform(0.5, 2.5), int(60 + random.uniform(-10, 10))) for _ in range(length)]
+
+def generate_boutique_808(hsv_array, length=64):
+    saturation = np.mean(hsv_array[:, 1])
+    pattern_density = int(saturation * 8) + 1  # 1 to 9
+    pattern = [36, 0, 0, 0, 38, 0, 0, 0][:pattern_density]
+    return pattern * (length // len(pattern) + 1)
+
+def generate_jitter_strings(rgb_array, scale, key, length=64):
+    base_note = {"C": 60, "D": 62, "E": 64, "F": 65, "G": 67, "A": 69, "B": 71}[scale]
+    scale_intervals = [0, 2, 4, 5, 7, 9, 11] if key == "major" else [0, 2, 3, 5, 7, 8, 10]
+    jitter = np.std(rgb_array) * 5  # Reduced jitter
+    return [(base_note + random.choice(scale_intervals), 0.25, int(48 + random.uniform(-jitter, jitter))) for _ in range(length)]
+
+def generate_metro_bass(hsv_array, scale, length=64):
+    base_note = {"C": 36, "D": 38, "E": 40, "F": 41, "G": 43, "A": 45, "B": 47}[scale]
+    rhythm = [1, 0, 0.5, 0, 1, 0, 0.5, 0.5]
+    intensity = np.mean(hsv_array[:, 2])  # Use value channel for intensity
+    return [(base_note, duration, int(60 + intensity * 35)) if duration > 0 else (0, 0.25, 0) for duration in rhythm * (length // 8 + 1)]
+
+def generate_dream_voice(rgb_array, scale, key, length=64):
+    base_note = {"C": 72, "D": 74, "E": 76, "F": 77, "G": 79, "A": 81, "B": 83}[scale]
+    scale_intervals = [0, 2, 4, 5, 7, 9, 11] if key == "major" else [0, 2, 3, 5, 7, 8, 10]
+    dreaminess = 1 - np.std(rgb_array)  # More uniform colors = more dreamy
+    return [(base_note + random.choice(scale_intervals), random.uniform(1, 4) * dreaminess, int(40 + random.uniform(0, 20))) for _ in range(length // 4)]
+
+def generate_pulsating_waves(hsv_array, scale, length=64):
+    base_note = {"C": 48, "D": 50, "E": 52, "F": 53, "G": 55, "A": 57, "B": 59}[scale]
+    wave_speed = np.mean(hsv_array[:, 1])  # Use saturation for wave speed
+    return [(base_note, 0.25, int(48 + 31 * np.sin(i * wave_speed))) for i in range(length)]
+
+
+def create_cosmic_midi(image_path, output_file):
     try:
-        rgb_array, hsv_array, warmth_coolness = get_image_data(image_path)
+        rgb_array, hsv_array, luminance, im = get_image_data(image_path)
+        tempo = get_cosmic_tempo(im)
+        time_sig = get_stellar_time_signature(im)
+        scale, key = get_galactic_key_and_scale(hsv_array)
         
-        tempo = get_tempo(rgb_array)
-        time_sig = get_time_signature(image_path)
-        scale, key = get_key_and_scale(hsv_array, warmth_coolness)
-        
-        midi = MIDIFile(2)
+        midi = MIDIFile(10)  # 10 tracks for all our cosmic elements
         midi.addTempo(0, 0, tempo)
+        midi.addTimeSignature(0, 0, time_sig, 2, 24)
         
-        instrument = select_instrument(rgb_array)
-        midi.addProgramChange(0, 0, 0, instrument)
+        base_volume = get_cosmic_volume(luminance)
         
-        img = cv2.imread(image_path, 0)
-        edges = cv2.Canny(img, 100, 200)
-        melody = generate_melody(edges.flatten(), scale, key)
+        # Main Piano track
+        piano_instrument = select_cosmic_instrument(rgb_array)
+        midi.addProgramChange(0, 0, 0, piano_instrument)
+        gray = cv2.cvtColor(np.array(im), cv2.COLOR_RGB2GRAY)
+        edges = cv2.Canny(gray, 100, 200)
+        melody = generate_cosmic_melody(edges, scale, key)
+        for i, (note, duration) in enumerate(melody):
+            midi.addNote(0, 0, note, i, duration, int(base_volume * 0.8))
         
+        # Texture-based Piano track
+        midi.addProgramChange(1, 0, 0, piano_instrument)
+        texture_melody = generate_texture_based_piano(rgb_array, scale, key)
         time = 0
-        for note, duration in melody:
-            if time + duration > 15:
-                break
-            midi.addNote(0, 0, note, time, duration, 100)
+        for note, duration, velocity in texture_melody:
+            midi.addNote(1, 0, note, time, duration, int(velocity * 0.7))
             time += duration
         
-        midi.addProgramChange(1, 0, 0, 0)
-        chord_prog = generate_chord_progression(hsv_array)
+        # Boutique 808
+        midi.addProgramChange(2, 9, 0, 0)  # Use channel 9 for percussion
+        boutique_808 = generate_boutique_808(hsv_array)
+        for i, note in enumerate(boutique_808):
+            if note != 0:
+                midi.addNote(2, 9, note, i * 0.25, 0.25, int(base_volume * 0.6))
         
+        # Jitter Strings
+        midi.addProgramChange(3, 0, 0, 49)  # String Ensemble 2
+        jitter_strings = generate_jitter_strings(rgb_array, scale, key)
+        for i, (note, duration, velocity) in enumerate(jitter_strings):
+            midi.addNote(3, 0, note, i * 0.25, duration, int(velocity * 0.6))
+        
+        # Metro Bass
+        midi.addProgramChange(4, 0, 0, 39)  # Synth Bass 2
+        metro_bass = generate_metro_bass(hsv_array, scale)
         time = 0
-        for chord in chord_prog * 4:
-            if time >= 15:
-                break
-            for note in [60 + chord, 64 + chord, 67 + chord]:
-                midi.addNote(1, 0, note, time, 1, 80)
-            time += 1
-
-        midi_buffer = io.BytesIO()
-        midi.writeFile(midi_buffer)
-
-        def timeout_handler(signum, frame):
-            raise TimeoutError("File writing operation timed out")
-
-        try:
-            signal.signal(signal.SIGALRM, timeout_handler)
-            signal.alarm(30)
-
-            directory = os.path.dirname(output_file) or '.'
-            if not os.access(directory, os.W_OK):
-                print(f"Error: No write permission in directory {directory}")
-                return
-            
-            free_space = shutil.disk_usage(directory).free
-            if free_space < 1024 * 1024:
-                print(f"Warning: Low disk space. Only {free_space / (1024*1024):.2f} MB available.")
-
-            signal.alarm(60)
-            
-            with open(output_file, "wb") as f:
-                midi_buffer.seek(0)
-                f.write(midi_buffer.getvalue())
-
-            signal.alarm(0)
-
-            if os.path.exists(output_file):
-                print(f"MIDI file created successfully: {output_file}")
-            else:
-                print(f"Error: MIDI file was not created: {output_file}")
-
-        except TimeoutError:
-            print("Error: File writing operation timed out after 60 seconds")
-        except PermissionError:
-            print(f"Error: Permission denied when trying to write {output_file}")
-        except IOError as e:
-            print(f"IOError when writing file: {e}")
-        except Exception as e:
-            print(f"Unexpected error when writing file: {e}")
-    
+        for note, duration, velocity in metro_bass:
+            if note != 0:
+                midi.addNote(4, 0, note, time, duration, int(velocity * 0.7))
+            time += duration
+        
+        # Dream Voice
+        midi.addProgramChange(5, 0, 0, 89)  # Pad 2 (warm)
+        dream_voice = generate_dream_voice(rgb_array, scale, key)
+        time = 0
+        for note, duration, velocity in dream_voice:
+            midi.addNote(5, 0, note, time, duration, int(velocity * 0.8))
+            time += duration
+        
+        # Pulsating Waves
+        midi.addProgramChange(6, 0, 0, 81)  # Lead 2 (sawtooth)
+        pulsating_waves = generate_pulsating_waves(hsv_array, scale)
+        for i, (note, duration, velocity) in enumerate(pulsating_waves):
+            midi.addNote(6, 0, note, i * 0.25, duration, int(velocity * 0.5))
+        
+        # Nebula Chords
+        midi.addProgramChange(7, 0, 0, 48)  # String Ensemble 1
+        chords = create_nebula_chords(hsv_array, scale, key)
+        for i, chord in enumerate(chords):
+            for note in chord:
+                midi.addNote(7, 0, note, i * 4, 4, int(base_volume * 0.5))
+        
+        # Bass track
+        midi.addProgramChange(8, 0, 0, 33)  # Fingered Bass
+        for i, chord in enumerate(chords):
+            midi.addNote(8, 0, chord[0] - 12, i * 4, 4, int(base_volume * 0.7))
+        
+        # Additional Drums
+        midi.addProgramChange(9, 9, 0, 0)  # Standard drum kit
+        saturation = np.mean(hsv_array[:, 1])
+        if saturation > 0.6:
+            pattern = [36, 0, 38, 0, 36, 38, 36, 38]  # More complex
+        elif saturation > 0.3:
+            pattern = [36, 0, 38, 0, 36, 0, 38, 0]  # Medium
+        else:
+            pattern = [36, 0, 0, 0, 38, 0, 0, 0]  # Simple
+        for i, drum in enumerate(pattern * 8):
+            if drum != 0:
+                midi.addNote(9, 9, drum, i * 0.5, 0.5, int(base_volume * 0.6))
+        
+        with open(output_file, "wb") as output_file:
+            midi.writeFile(output_file)
+        print(f"Balanced cosmic MIDI soundscape created: {output_file}")
+        
     except Exception as e:
-        print(f"Error in create_midi: {e}")
+        print(f"Error in create_cosmic_midi: {e}")
+        import traceback
         traceback.print_exc()
 
 # Usage
-print("Starting music generation process...")
+print("Initiating cosmic soundscape generation with balanced volumes...")
 try:
-    create_midi("nasaPicture2.jpg", "output.mid")
-    print("Music generation complete. Output saved to 'output.mid'.")
+    create_cosmic_midi("nasaPicture2.jpg", "cosmic_output2_balanced.mid")
+    print("Cosmic soundscape generation complete. Output saved to 'cosmic_output2_balanced.mid'.")
 except Exception as e:
-    print(f"An error occurred during music generation: {e}")
+    print(f"An anomaly occurred during cosmic soundscape generation: {e}")
